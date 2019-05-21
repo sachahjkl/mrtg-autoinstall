@@ -1,0 +1,284 @@
+#!/bin/bash
+#/!\ EXECUTE AS ROOT ONLY /!\
+#This file is part of the Sacha MRTG's scripting tools.
+#Copyright (c) 2019 Sacha Froment.
+#This program is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+#Prerequistes :
+# MySQL account : status:[nopassword]
+# Apache2
+
+#----------------Directories declaration
+mrtg_conf="/etc/mrtg.cfg" #location of the MRTG config file from which the MRTG homepage is generated
+mrtg_scripts="/etc/mrtg/" #scripts doing the data collection go here
+mrtg_www="/var/www/mrtg/"  #location of the MRTG's index.html and such
+mrtg_vhost="mrtg.conf"    #name of the MRTG vhost
+apache_conf="/etc/apache2/apache2.conf"
+#----------------Install nescessary packages
+#apt update
+apt -y install snmpd sysstat lynx
+sed -i 's/#rocommunity public  localhost/rocommunity public  localhost/g' /etc/snmp/snmpd.conf
+sed -i 's/ENABLED="false"/ENABLED="true"/g' /etc/default/sysstat
+systemctl restart snmpd sysstat # restart services to apply changes
+
+#We install MRTG after it's dependecies are setup
+apt -y install mrtg
+
+#Setup MRTG
+#We create the directories in which MRTG's files will be located
+mkdir "$mrtg_www"
+mkdir "$mrtg_scripts" 
+
+#initial generation
+cfgmaker -zero-speed=100000000 public@127.0.0.1 --global 'Language: French'  > "$mrtg_conf"
+indexmaker --output "${mrtg_www}index.html" "$mrtg_conf" --columns=2 --nolegend
+
+#Apache2 configuration
+echo -e "Alias /mrtg \"$mrtg_www\"
+
+<Directory \"$mrtg_www\">
+    Options None
+    AllowOverride None
+    Require all granted
+</Directory>" > /etc/apache2/sites-available/"$mrtg_vhost"
+#enable vhost and reload apache2 to take into account the new vhost
+a2ensite "$mrtg_vhost" && service apache2 reload
+
+#----------------Setup each monitoring process
+
+#---ping to google for connectivity sanity check
+sc_name_ping="ping_google"
+echo "#!/bin/sh
+P=\$(ping  -c3 -q 8.8.8.8|grep avg|cut -d\" \" -f4)
+MIN=\$(echo \$P|cut -d\"/\" -f1)
+MAX=\$(echo \$P|cut -d\"/\" -f2)
+echo \$MAX
+echo \$MIN" > "$mrtg_scripts$sc_name_ping"
+
+#---monitor disk space
+#by default monitors the root directory /
+sc_name_diskspace="disk_space"
+dir="/"
+partition=$(df | grep "$dir$" | cut -d " " -f 1)
+task_name_diskpace="disk$(echo $partition | sed -r 's/\//_/g')"
+echo -e "#!/bin/bash
+ARGV=(\"\$@\")
+
+if [ -z \"\$ARGV\" ]; then
+    echo 'Target not defined';
+    exit;
+fi
+
+hddinfo=\$(df | grep \$ARGV)
+
+hddtotal=\$(echo \$hddinfo |awk '{print \$2}')
+hddused=\$(echo \$hddinfo |awk '{print \$3}')
+
+echo 0;
+awk \"BEGIN {print (\$hddused/\$hddtotal)*10000}\";
+echo 0;
+echo 0;" > "$mrtg_scripts$sc_name_diskspace"
+
+#---monitor ram usage
+sc_name_mem="mem"
+total_mem=$( awk '/Mem:/ {print $2}' <(free -b) )
+echo -e "#!/bin/bash
+USED=\$( awk '/Mem:/ {print \$3}' <(free -b) )
+FREE=\$( awk '/Mem:/ {print \$4}' <(free -b) )
+echo \$USED
+echo \$FREE" > /etc/mrtg/"$sc_name_mem"
+
+#---monitor cpu activity
+sc_name_cpu="cpu"
+echo "#!/usr/bin/perl
+@line = \`/usr/bin/sar | grep all | /usr/bin/tail -n 2 | /usr/bin/head -n 1 | /bin/sed 's/\ \ */ /g'\`;
+@data = split(/ /, @line[0]);
+if (@data[2] eq \"\") {
+printf \"0\n\";
+}else {
+printf (\"%3.0f\n\", @data[2] + 0.5);
+}
+printf (\"%3.0f\n\", (@data[3])+(@data[2])+(@data[4]+0.5));
+\$uptime = \`/usr/bin/uptime | sed 's/\ \ */ /g'\`;
+@uptime = split(/,/, \$uptime);
+@uptime = split(/up/, @uptime[0]);
+\$server = \`/bin/uname -n\`;
+printf \"@uptime[1]\n\";
+printf \$server;" > "$mrtg_scripts$sc_name_cpu"
+
+#---monitor appache traffic
+sc_name_apache="apache2"
+echo "#!/usr/bin/perl
+# can return hits or bytes (counters)
+@res = \`lynx -dump http://localhost:80/server-status\`;
+foreach \$res (@res) {
+    if (\$res =~ /Server uptime: (.*)$/) { \$up = \$1; last } else { next }
+    if (\$res =~ /Server at/) { \$server = \$res; last } else { next }
+}
+
+@res = \`lynx -dump http://localhost:80/server-status?auto\`;
+
+foreach \$res (@res) {
+    if (\$res =~ /Total Accesses: (\d+)/) { \$d1 = \$1; next }
+    if (\$res =~ /Total kBytes: (\d+)/) { \$d2 = \$1 * 1024; next }
+}
+\$d1 = int(\$d1);
+\$d2 = int(\$d2);
+if (\$ARGV[0] eq \"hits\") {
+    print \"\$d1\n\";
+    print \"\$d1\n\";
+} elsif ($ARGV[0] eq \"bytes\") {
+    print \"\$d2\n\";
+    print \"\$d2\n\";
+}
+print \"$up\n\";
+print \"$server\";" > "$mrtg_scripts$sc_name_apache"
+
+if [ -z "$(awk '/<Location \/server-status>/,/ExtendedStatus On/' $apache_conf)" ]
+then
+    echo -e "
+    <Location /server-status>
+        Require local
+    </Location>
+    ExtendedStatus On" >> $apache_conf
+fi
+
+#---monitor mysql questions
+sc_name_mysql="mysql_status"
+echo -e "#!/bin/bash
+
+mysqlcmd=\"/usr/bin/mysqladmin -u status extended-status\";
+
+# -----------------------------------------------------------
+
+function get_data {
+       data=\$(\$mysqlcmd);
+       questions=\$( echo \"\$data\"|grep 'Questions'|awk -F \" \" '{print \$4}');
+       uptime=\$( echo \"\$data\"|grep 'Uptime'|awk -F \" \" '{print \$4}');
+       cache=\$( echo \"\$data\"|grep 'Qcache_hits'|awk -F \" \" '{print \$4}');
+}
+
+function output_data {
+       echo \"\$questions\";
+       echo \"\$cache\";
+       uptime=\$(echo \"\$uptime\" | head -n 1);
+       echo \"\$((uptime/86400)) jours\"
+       echo \"MySQL Server\";
+}
+get_data;
+output_data" > "$mrtg_scripts$sc_name_mysql"
+
+#set permissions to 70 rwx------ to run this scripts
+chmod 700 "${mrtg_scripts}"*
+
+#--------------------Add custom config to /etc/mrtg.cfg
+echo "
+#---------Ping GOOGLE----------------------------
+Target[ping_google]: \`$mrtg_scripts$sc_name_ping\`
+Options[ping_google]: nopercent,growright,gauge,noinfo, nobanner
+MaxBytes[ping_google]: 10000
+AbsMax[ping_google]: 10000
+YLegend[ping_google]: Latence
+ShortLegend[ping_google]: ms
+Legend1[ping_google]: Latence max en ms
+Legend2[ping_google]: Latence min en ms
+LegendI[ping_google]: Latence Max:
+LegendO[ping_google]: Latence Min:
+Title[ping_google]: Ping sur google.fr
+PageTop[ping_google]: <h1>Latence google.fr</h1>
+WithPeak[ping_google]:wmy
+Legend4[ping_google]: Max de la latence min
+Legend3[ping_google]: Max de la latence max
+#--------end ping--------------------------------
+#---------Memory---------------------------------
+Target[mem]: \`$mrtg_scripts$sc_name_mem\`
+Options[mem]: nopercent,growright,gauge,noinfo, nobanner
+Unscaled[mem]:dwmy
+MaxBytes[mem]: $total_mem
+Kilo[mem]:1024
+YLegend[mem]: RAM
+ShortLegend[mem]: o
+Legend1[mem]: Mémoire libre
+Legend2[mem]: Mémoire utilisée
+LegendI[mem]: Mém. Libre:
+LegendO[mem]: Mém. Utilisée:
+Title[mem]: Mémoire
+PageTop[mem]: <h1>Mémoire</h1>
+WithPeak[mem]:wmy
+Legend3[mem]: Mémoire libre max
+Legend4[mem]: Mémoire utilisée max
+#--------end Memory------------------------------
+#--------Disk Space------------------------------
+Target[$task_name_diskpace]: \`$mrtg_scripts$sc_name_diskspace $partition\`
+Options[$task_name_diskpace]: growright, gauge
+MaxBytes[$task_name_diskpace]: 10000
+ShortLegend[$task_name_diskpace]: %
+YLegend[$task_name_diskpace]: Utilisation disque %
+Title[$task_name_diskpace]: Utilisation disque
+PageTop[$task_name_diskpace]: <h1>Utilisation disque $partition</h1>
+Unscaled[$task_name_diskpace]: ymwd
+TimeStrPos[$task_name_diskpace]: RU
+YTicsFactor[$task_name_diskpace]: 0.01
+Factor[$task_name_diskpace]: 0.01
+#--------End Disk Space--------------------------
+#---------Apache2 Traffic------------------------
+Target[apache2_traffic]: \`$mrtg_scripts$sc_name_apache bytes\`
+Options[apache2_traffic]: nopercent, growright, noinfo, nobanner, noi
+PageTop[apache2_traffic]: <h1>Traffic Apache</h1>
+MaxBytes[apache2_traffic]:16000
+AbsMax[apache2_traffic]:20000
+YLegend[apache2_traffic]: octets/s
+ShortLegend[apache2_traffic]: o/s
+LegendO[apache2_traffic]: Traffic Apache:
+Legend2[apache2_traffic]: Traffic Apache
+Title[apache2_traffic]: Traffic du serveur Apache
+WithPeak[apache2_traffic]: wmy
+Legend4[apache2_traffic]: Traffic max Apache
+#------------End Apache2 Traffic-----------------
+#-----------------CPU----------------------------
+Target[cpu]: \`$mrtg_scripts$sc_name_cpu\`
+Options[cpu]: nopercent,growright,gauge,noinfo, nobanner
+#Unscaled[cpu]:dwmy
+MaxBytes[cpu]: 100
+YLegend[cpu]: % CPU
+ShortLegend[cpu]: % CPU
+Legend1[cpu]: % CPU Utilisateur
+Legend2[cpu]: % CPU Utilisateur + Système
+LegendI[cpu]: Utilisateur:
+LegendO[cpu]: Total:
+Title[cpu]: CPU
+PageTop[cpu]: <h1>CPU</h1>
+WithPeak[cpu]:wmy
+Legend3[cpu]: Max % CPU Utilisateur
+Legend4[cpu]: Max % CPU Utilisateur + Système
+#--------end CPU---------------------------------
+#--------Mysql Questions-------------------------
+Target[mysql]: \`$mrtg_scripts$sc_name_mysql\`
+PageTop[mysql]: <h1>Requêtes MySQL</h1>
+Options[mysql]: growright, nopercent
+MaxBytes[mysql]: 100
+Title[mysql]: Requêtes MySQL
+YLegend[mysql]: Requêtes
+ShortLegend[mysql]: q/s
+Legend1[mysql]: Requêtes exécutées
+Legend2[mysql]: Cache hits
+LegendI[mysql]: Questions:
+LegendO[mysql]: Cache hits:
+#--------End Mysql-------------------------------
+" >> "$mrtg_conf"
+
+#we set the config file's encoding to ISO-8859-1 because it's the only one MRTG understands correctly
+iconv -f UTF-8 -t ISO-8859-1 "$mrtg_conf">"$mrtg_conf".tmp && mv "$mrtg_conf".tmp "$mrtg_conf"
+#Regenerate index to include our changes
+indexmaker --output "${mrtg_www}index.html" "$mrtg_conf" --columns=2 --nolegend
