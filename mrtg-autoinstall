@@ -50,7 +50,7 @@ echo -e "Alias /mrtg \"$mrtg_www\"
 <Directory \"$mrtg_www\">
     Options None
     AllowOverride None
-    Require all granted
+    Require ip 127.0.0.1
 </Directory>" > /etc/apache2/sites-available/"$mrtg_vhost"
 #enable vhost and reload apache2 to take into account the new vhost
 a2ensite "$mrtg_vhost" && service apache2 reload
