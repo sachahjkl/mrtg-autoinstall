@@ -61,7 +61,13 @@ echo -e "Alias /mrtg \"$mrtg_www\"
         Require local
     </Location>
 </VirtualHost>" > /etc/apache2/sites-available/"$mrtg_vhost"
-#enable vhost and reload apache2 to take into account the new vhost
+
+if ! grep -q 'ExtendedStatus On' $apache_conf;
+then
+    echo "ExtendedStatus On" >> $apache_conf
+fi
+
+#enable vhost and reload apache2 to take into account the new vhost and config
 a2ensite "$mrtg_vhost" && service apache2 reload
 
 #----------------Setup each monitoring process
@@ -153,15 +159,6 @@ if (\$ARGV[0] eq \"hits\") {
 }
 print \"\$up\n\";
 print \"\$server\";" > "$mrtg_scripts$sc_name_apache"
-
-if [ -z "$(awk '/<Location \/server-status>/,/ExtendedStatus On/' $apache_conf)" ]
-then
-    echo -e "
-    <Location /server-status>
-        Require local
-    </Location>
-    ExtendedStatus On" >> $apache_conf
-fi
 
 #---monitor mysql questions
 sc_name_mysql="mysql_status"
