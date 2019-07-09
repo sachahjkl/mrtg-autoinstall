@@ -51,7 +51,16 @@ echo -e "Alias /mrtg \"$mrtg_www\"
     Options None
     AllowOverride None
     Require ip 127.0.0.1
-</Directory>" > /etc/apache2/sites-available/"$mrtg_vhost"
+</Directory>
+
+<VirtualHost *:80>
+    ServerName localhost
+    <Location /server-status>
+        SetHandler server-status
+        Require ip 127.0.0.1 163.172.34.60
+        Require local
+    </Location>
+</VirtualHost>" > /etc/apache2/sites-available/"$mrtg_vhost"
 #enable vhost and reload apache2 to take into account the new vhost
 a2ensite "$mrtg_vhost" && service apache2 reload
 
@@ -138,12 +147,12 @@ foreach \$res (@res) {
 if (\$ARGV[0] eq \"hits\") {
     print \"\$d1\n\";
     print \"\$d1\n\";
-} elsif ($ARGV[0] eq \"bytes\") {
+} elsif (\$ARGV[0] eq \"bytes\") {
     print \"\$d2\n\";
     print \"\$d2\n\";
 }
-print \"$up\n\";
-print \"$server\";" > "$mrtg_scripts$sc_name_apache"
+print \"\$up\n\";
+print \"\$server\";" > "$mrtg_scripts$sc_name_apache"
 
 if [ -z "$(awk '/<Location \/server-status>/,/ExtendedStatus On/' $apache_conf)" ]
 then
