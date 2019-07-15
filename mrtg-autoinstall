@@ -50,7 +50,8 @@ echo -e "Alias /mrtg \"$mrtg_www\"
 <Directory \"$mrtg_www\">
     Options None
     AllowOverride None
-    Require ip 127.0.0.1 #ajoutez vos ips
+    Require ip 127.0.0.1 
+    #ajoutez vos ips
 </Directory>
 
 <VirtualHost *:80>
