@@ -216,15 +216,15 @@ MaxBytes[mem]: $total_mem
 Kilo[mem]:1024
 YLegend[mem]: RAM
 ShortLegend[mem]: o
-Legend1[mem]: Mémoire libre
-Legend2[mem]: Mémoire utilisée
-LegendI[mem]: Mém. Libre:
-LegendO[mem]: Mém. Utilisée:
+Legend1[mem]: Mémoire utilisée
+Legend2[mem]: Mémoire libre
+LegendI[mem]: Mém. Utilisée:
+LegendO[mem]: Mém. Libre:
 Title[mem]: Mémoire
 PageTop[mem]: <h1>Mémoire</h1>
 WithPeak[mem]:wmy
-Legend3[mem]: Mémoire libre max
-Legend4[mem]: Mémoire utilisée max
+Legend3[mem]: Mémoire utilisée max
+Legend4[mem]: Mémoire libre max
 #--------end Memory------------------------------
 #--------Disk Space------------------------------
 Target[$task_name_diskpace]: \`$mrtg_scripts$sc_name_diskspace $partition\`
