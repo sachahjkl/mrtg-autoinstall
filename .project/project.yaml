@@ -1,0 +1,8 @@
+name: "mrtg-autoinstall"
+description: ""
+topics: []
+homepage: ""
+source:
+  provider: gitlab
+  namespace: "sachahjkl"
+  path: "sachahjkl/mrtg-autoinstall"
